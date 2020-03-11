@@ -30,14 +30,15 @@
 
 #define NAME_WIFI_CREDENTIALS "WIFI_CREDENTIALS"
 #define KEY_SSID_PRIMARY "SSID_PRIMARY"
-#define KEY_PASSWORD_PRIMARY "PASSWORD+PRIMARY"
+#define KEY_PASSWORD_PRIMARY "PASSWORD_PRIMARY"
+#define EMPTY_STRING ""
 
 //Preferences preferences;
 
 const char* ssid = "*********";
 const char* password = "*********";
 
-char deviceName[] = char[DEVICE_NAME_SIZE];
+char deviceName[DEVICE_NAME_SIZE];
 
 /**
  * Create unique device name from MAC address
@@ -53,11 +54,13 @@ void createName() {
 void startCameraServer();
 
 void loadPreferences() {
+  Serial.println(F("loadPreferences()"));
   Preferences preferences;
   preferences.begin(NAME_WIFI_CREDENTIALS, true);
-  ssid = preferences.getString(KEY_SSID_PRIMARY).c_str();
-  password = preferences.getString(KEY_PASSWORD_PRIMARY).c_str();
-  
+  ssid = preferences.getString(KEY_SSID_PRIMARY, EMPTY_STRING).c_str();
+  password = preferences.getString(KEY_PASSWORD_PRIMARY, EMPTY_STRING).c_str();
+  Serial.println(ssid);
+  Serial.println(password);
 }
 
 void setup() {
@@ -65,9 +68,7 @@ void setup() {
   Serial.setDebugOutput(true);
   Serial.println();
   createName();
-  
- 
-
+  loadPreferences();
   initble();
 
   camera_config_t config;
@@ -96,10 +97,12 @@ void setup() {
     config.frame_size = FRAMESIZE_UXGA;
     config.jpeg_quality = 10;
     config.fb_count = 2;
+    Serial.println(F("psram found"));
   } else {
     config.frame_size = FRAMESIZE_SVGA;
     config.jpeg_quality = 12;
     config.fb_count = 1;
+    Serial.println(F("psram not found"));
   }
 
 #if defined(CAMERA_MODEL_ESP_EYE)
@@ -145,17 +148,17 @@ void setup() {
   Serial.println(F("' to connect"));
 }
 
-class ConfigCallBackHandler: public BLECharacteristicCallbacks {
+class ConfigCallbackHandler: public BLECharacteristicCallbacks {
 
   void onWrite(BLECharacteristic *pCharacteristic) {
-    Serial.println(F("ConfigCallBackHandler:onWrite"));
+    Serial.println(F("ConfigCallbackHandler:onWrite"));
     std::string value = pCharacteristic->getValue();
     if (value.length() == 0) {
       return;
     }
     Serial.println("Received over BLE: " + String((char *)&value[0]));
     StaticJsonDocument<200> doc;
-    DeserializationError error = deserializeJson(doc, json);
+    DeserializationError error = deserializeJson(doc, value);
     // Test if parsing succeeds.
     if (error) {
       Serial.print(F("deserializeJson() failed: "));
@@ -164,7 +167,12 @@ class ConfigCallBackHandler: public BLECharacteristicCallbacks {
     }
     if(doc.containsKey(F("wifi_ssid")) && doc.containsKey(F("wifi_password"))) {
       ssid = doc[F("wifi_ssid")];
-      password = doc[F(wifi_password)];
+      password = doc[F("wifi_password")];
+      Serial.print("SSID: ");
+      Serial.print(ssid);
+      Serial.print(" PASSWORD: ");
+      Serial.print(password);
+      Serial.println("");
       Preferences preferences;
       preferences.begin(NAME_WIFI_CREDENTIALS, false);
       preferences.putString(KEY_SSID_PRIMARY, ssid);
@@ -172,22 +180,30 @@ class ConfigCallBackHandler: public BLECharacteristicCallbacks {
       preferences.putString(KEY_PASSWORD_PRIMARY, password);
       //preferences.putString("pwSecondary", password);
       preferences.putBool("valid", true);
-      preferences.end();
+      preferences.end();      
+    }
+    if(doc.containsKey(F("restart"))) {
+      WiFi.disconnect();
+      esp_restart();
     }
     
-    
-
   }
 
   void onRead(BLECharacteristic *pCharacteristics) {
-    Serial.println("ConfigCallBackHandler:onRead");
+    Serial.println(F("ConfigCallbackHandler:onRead"));
+    StaticJsonDocument<200> doc;
+    doc["wifi_ssid"] = ssid;
+    doc["wifi_password"] = password;
+    String camConfig;
+    serializeJson(doc, camConfig);
+    pCharacteristics->setValue((uint8_t*)&camConfig[0], camConfig.length());
   }
-}
+};
 
 void initble() {
   Serial.println("Starting BLE work!");
 
-  BLEDevice::init("Long name works now");
+  BLEDevice::init(deviceName);
   BLEServer *pServer = BLEDevice::createServer();
   BLEService *pService = pServer->createService(CONFIGURATION_SERVICE_UUID);
   BLECharacteristic *pConfigCharacteristic = pService->createCharacteristic(
@@ -196,8 +212,7 @@ void initble() {
                                          BLECharacteristic::PROPERTY_WRITE
                                        );
   
-  pWiFiSSIDCharacteristic->setValue("None");
-  pWiFiPasswordCharacteristic->setValue("None");
+  pConfigCharacteristic->setCallbacks(new ConfigCallbackHandler());
   pService->start();
   // BLEAdvertising *pAdvertising = pServer->getAdvertising();  // this still is working for backward compatibility
   BLEAdvertising *pAdvertising = BLEDevice::getAdvertising();
