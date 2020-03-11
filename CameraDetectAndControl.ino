@@ -1,6 +1,13 @@
 #include "esp_camera.h"
 #include <WiFi.h>
 #include <Preferences.h>
+#include <ArduinoJson.h>
+
+// Includes for BLE
+#include <BLEUtils.h>
+#include <BLEServer.h>
+#include <BLEDevice.h>
+#include <BLEAdvertising.h>
 
 //
 // WARNING!!! Make sure that you have either selected ESP32 Wrover Module,
@@ -8,30 +15,58 @@
 //
 
 // Select camera model
-#define CAMERA_MODEL_WROVER_KIT
+//#define CAMERA_MODEL_WROVER_KIT
 //#define CAMERA_MODEL_ESP_EYE
 //#define CAMERA_MODEL_M5STACK_PSRAM
 //#define CAMERA_MODEL_M5STACK_WIDE
-//#define CAMERA_MODEL_AI_THINKER
+#define CAMERA_MODEL_AI_THINKER
 
 #include "camera_pins.h"
 
 #define CONFIGURATION_SERVICE_UUID "4fafc201-1fb5-459e-8fcc-c5c9c331914b"
-#define WIFI_SSID_CHARACTERISTIC_UUID "beb5483e-36e1-4688-b7f5-ea07361b26a8"
-#define WIFI_PASSWORD_CHARACTERISTIC_UUID "beb5483e-36e1-4688-b7f5-ea07361b26a9"
+#define CONFIG_CHARACTERISTIC_UUID "beb5483e-36e1-4688-b7f5-ea07361b26a8"
 
+#define DEVICE_NAME_SIZE 19
 
-Preferences preferences;
+#define NAME_WIFI_CREDENTIALS "WIFI_CREDENTIALS"
+#define KEY_SSID_PRIMARY "SSID_PRIMARY"
+#define KEY_PASSWORD_PRIMARY "PASSWORD+PRIMARY"
+
+//Preferences preferences;
 
 const char* ssid = "*********";
 const char* password = "*********";
 
+char deviceName[] = char[DEVICE_NAME_SIZE];
+
+/**
+ * Create unique device name from MAC address
+ **/
+void createName() {
+  uint8_t baseMac[6];
+  // Get MAC address for WiFi station
+  esp_read_mac(baseMac, ESP_MAC_WIFI_STA);
+  // Write unique name into apName
+  sprintf(deviceName, "ESP32-%02X%02X%02X%02X%02X%02X", baseMac[0], baseMac[1], baseMac[2], baseMac[3], baseMac[4], baseMac[5]);
+}
+
 void startCameraServer();
+
+void loadPreferences() {
+  Preferences preferences;
+  preferences.begin(NAME_WIFI_CREDENTIALS, true);
+  ssid = preferences.getString(KEY_SSID_PRIMARY).c_str();
+  password = preferences.getString(KEY_PASSWORD_PRIMARY).c_str();
+  
+}
 
 void setup() {
   Serial.begin(115200);
   Serial.setDebugOutput(true);
   Serial.println();
+  createName();
+  
+ 
 
   initble();
 
@@ -101,13 +136,52 @@ void setup() {
     Serial.print(".");
   }
   Serial.println("");
-  Serial.println("WiFi connected");
+  Serial.println(F("WiFi connected"));
 
   startCameraServer();
 
-  Serial.print("Camera Ready! Use 'http://");
+  Serial.print(F("Camera Ready! Use 'http://"));
   Serial.print(WiFi.localIP());
-  Serial.println("' to connect");
+  Serial.println(F("' to connect"));
+}
+
+class ConfigCallBackHandler: public BLECharacteristicCallbacks {
+
+  void onWrite(BLECharacteristic *pCharacteristic) {
+    Serial.println(F("ConfigCallBackHandler:onWrite"));
+    std::string value = pCharacteristic->getValue();
+    if (value.length() == 0) {
+      return;
+    }
+    Serial.println("Received over BLE: " + String((char *)&value[0]));
+    StaticJsonDocument<200> doc;
+    DeserializationError error = deserializeJson(doc, json);
+    // Test if parsing succeeds.
+    if (error) {
+      Serial.print(F("deserializeJson() failed: "));
+      Serial.println(error.c_str());
+      return;
+    }
+    if(doc.containsKey(F("wifi_ssid")) && doc.containsKey(F("wifi_password"))) {
+      ssid = doc[F("wifi_ssid")];
+      password = doc[F(wifi_password)];
+      Preferences preferences;
+      preferences.begin(NAME_WIFI_CREDENTIALS, false);
+      preferences.putString(KEY_SSID_PRIMARY, ssid);
+      //preferences.putString("ssidSecondary", ssid);
+      preferences.putString(KEY_PASSWORD_PRIMARY, password);
+      //preferences.putString("pwSecondary", password);
+      preferences.putBool("valid", true);
+      preferences.end();
+    }
+    
+    
+
+  }
+
+  void onRead(BLECharacteristic *pCharacteristics) {
+    Serial.println("ConfigCallBackHandler:onRead");
+  }
 }
 
 void initble() {
@@ -116,16 +190,12 @@ void initble() {
   BLEDevice::init("Long name works now");
   BLEServer *pServer = BLEDevice::createServer();
   BLEService *pService = pServer->createService(CONFIGURATION_SERVICE_UUID);
-  BLECharacteristic *pWiFiSSIDCharacteristic = pService->createCharacteristic(
-                                         WIFI_SSID_CHARACTERISTIC_UUID,
+  BLECharacteristic *pConfigCharacteristic = pService->createCharacteristic(
+                                         CONFIG_CHARACTERISTIC_UUID,
                                          BLECharacteristic::PROPERTY_READ |
                                          BLECharacteristic::PROPERTY_WRITE
                                        );
-  BLECharacteristic *pWiFiPasswordCharacteristic = pService->createCharacteristic(
-                                         WIFI_PASSWORD_CHARACTERISTIC_UUID,
-                                         BLECharacteristic::PROPERTY_READ |
-                                         BLECharacteristic::PROPERTY_WRITE
-                                       );
+  
   pWiFiSSIDCharacteristic->setValue("None");
   pWiFiPasswordCharacteristic->setValue("None");
   pService->start();
