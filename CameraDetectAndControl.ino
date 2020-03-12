@@ -28,15 +28,15 @@
 
 #define DEVICE_NAME_SIZE 19
 
-#define NAME_WIFI_CREDENTIALS "WIFI_CREDENTIALS"
-#define KEY_SSID_PRIMARY "SSID_PRIMARY"
-#define KEY_PASSWORD_PRIMARY "PASSWORD_PRIMARY"
-#define EMPTY_STRING ""
+const String NAME_WIFI_CREDENTIALS = String("WIFI_CREDENTIALS");
+const String KEY_SSID_PRIMARY = String("ssid_primary");
+const String KEY_PASSWORD_PRIMARY = String("password_primary");
+const String EMPTY_STRING = "";
 
 //Preferences preferences;
 
-const char* ssid = "*********";
-const char* password = "*********";
+String ssid = "*********";
+String password = "*********";
 
 char deviceName[DEVICE_NAME_SIZE];
 
@@ -56,11 +56,19 @@ void startCameraServer();
 void loadPreferences() {
   Serial.println(F("loadPreferences()"));
   Preferences preferences;
-  preferences.begin(NAME_WIFI_CREDENTIALS, true);
-  ssid = preferences.getString(KEY_SSID_PRIMARY, EMPTY_STRING).c_str();
-  password = preferences.getString(KEY_PASSWORD_PRIMARY, EMPTY_STRING).c_str();
+  preferences.begin(NAME_WIFI_CREDENTIALS.c_str(), false);
+  ssid = preferences.getString(KEY_SSID_PRIMARY.c_str(), EMPTY_STRING.c_str());
+  password = preferences.getString(KEY_PASSWORD_PRIMARY.c_str(), EMPTY_STRING.c_str());
+  bool valid = preferences.getBool("valid", false);
+  
+  Serial.print("ssid: ");
   Serial.println(ssid);
+  Serial.print("password: ");
   Serial.println(password);
+  
+  Serial.print("valid: ");
+  Serial.println(valid);
+  
 }
 
 void setup() {
@@ -132,7 +140,7 @@ void setup() {
   s->set_hmirror(s, 1);
 #endif
 
-  WiFi.begin(ssid, password);
+  WiFi.begin(ssid.c_str(), password.c_str());
 
   while (WiFi.status() != WL_CONNECTED) {
     delay(500);
@@ -165,24 +173,25 @@ class ConfigCallbackHandler: public BLECharacteristicCallbacks {
       Serial.println(error.c_str());
       return;
     }
-    if(doc.containsKey(F("wifi_ssid")) && doc.containsKey(F("wifi_password"))) {
-      ssid = doc[F("wifi_ssid")];
-      password = doc[F("wifi_password")];
-      Serial.print("SSID: ");
-      Serial.print(ssid);
-      Serial.print(" PASSWORD: ");
-      Serial.print(password);
-      Serial.println("");
+    if(doc.containsKey(KEY_SSID_PRIMARY) && doc.containsKey(KEY_PASSWORD_PRIMARY)) {
+      ssid = doc[KEY_SSID_PRIMARY].as<String>();
+      password = doc[KEY_PASSWORD_PRIMARY].as<String>();
+      Serial.print("ssid: ");
+      Serial.println(ssid);
+      Serial.print("password: ");
+      Serial.println(password);
+    
       Preferences preferences;
-      preferences.begin(NAME_WIFI_CREDENTIALS, false);
-      preferences.putString(KEY_SSID_PRIMARY, ssid);
+      preferences.begin(NAME_WIFI_CREDENTIALS.c_str(), false);
+      preferences.putString(KEY_SSID_PRIMARY.c_str(), ssid);
       //preferences.putString("ssidSecondary", ssid);
-      preferences.putString(KEY_PASSWORD_PRIMARY, password);
+      preferences.putString(KEY_PASSWORD_PRIMARY.c_str(), password);
       //preferences.putString("pwSecondary", password);
       preferences.putBool("valid", true);
       preferences.end();      
     }
     if(doc.containsKey(F("restart"))) {
+      Serial.println(F("Restarting..."));
       WiFi.disconnect();
       esp_restart();
     }
@@ -192,8 +201,8 @@ class ConfigCallbackHandler: public BLECharacteristicCallbacks {
   void onRead(BLECharacteristic *pCharacteristics) {
     Serial.println(F("ConfigCallbackHandler:onRead"));
     StaticJsonDocument<200> doc;
-    doc["wifi_ssid"] = ssid;
-    doc["wifi_password"] = password;
+    doc[KEY_SSID_PRIMARY] = ssid;
+    doc[KEY_PASSWORD_PRIMARY] = password;
     String camConfig;
     serializeJson(doc, camConfig);
     pCharacteristics->setValue((uint8_t*)&camConfig[0], camConfig.length());
