@@ -28,9 +28,9 @@
 
 #define DEVICE_NAME_SIZE 19
 
-const String NAME_WIFI_CREDENTIALS = String("WIFI_CREDENTIALS");
-const String KEY_SSID_PRIMARY = String("ssid_primary");
-const String KEY_PASSWORD_PRIMARY = String("password_primary");
+const String NAME_WIFI_CREDENTIALS = "wifi_cred";
+const String KEY_SSID_PRIMARY = "ssid_primary";
+const String KEY_PASSWORD_PRIMARY = "pw_primary";
 const String EMPTY_STRING = "";
 
 //Preferences preferences;
